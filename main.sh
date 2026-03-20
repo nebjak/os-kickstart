@@ -91,6 +91,7 @@ ALL_ITEMS=(
     "linux|gnome-optimize.sh||GNOME Optimize -- disable animations, sounds, hot corners"
     "linux|nautilus-optimize.sh||Nautilus Optimize -- restrict Tracker, limit thumbnails"
     "linux|apparmor-setup.sh||AppArmor Setup -- learning mode with Slack reminder"
+    "linux|kernel-optimize.sh||Kernel Optimize -- sysctl, limits, sshd, scheduler tuning"
     # ── Installations ──
     "all|---||"
     "all|---||── Installations ─────────────────────────────"
@@ -122,6 +123,8 @@ check_installed() {
         ---) return 1 ;;
         gnome-optimize.sh|nautilus-optimize.sh|apparmor-setup.sh)
             return 1 ;;
+        kernel-optimize.sh)
+            [[ -f /etc/sysctl.conf ]] && grep -q "tcp_congestion_control = bbr" /etc/sysctl.conf 2>/dev/null ;;
         install-shell-tools.sh)
             case "$component" in
                 zsh)     [[ -d "$HOME/.oh-my-zsh" ]] && command -v zsh &>/dev/null ;;

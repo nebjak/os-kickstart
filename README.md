@@ -48,6 +48,7 @@ bash main.sh
 | `gnome-optimize.sh` | Disable GNOME animations, sounds, hot corners, non-essential extensions |
 | `nautilus-optimize.sh` | Restrict Tracker indexing, limit thumbnails, clear cache |
 | `apparmor-setup.sh` | AppArmor learning mode + Slack reminder after 7 days |
+| `kernel-optimize.sh` | Kernel sysctl tuning, file descriptor limits, sshd hardening, I/O scheduler, RAM-based autotune |
 
 ### 🐚 Shell Environment
 
@@ -110,6 +111,7 @@ os-kickstart/
 │   ├── gnome-optimize.sh             # 🐧  GNOME desktop optimization
 │   ├── nautilus-optimize.sh          # 🐧  Nautilus / Tracker optimization
 │   ├── apparmor-setup.sh             # 🐧  AppArmor learning mode
+│   ├── kernel-optimize.sh            # ⚡  sysctl + limits + sshd + scheduler + autotune
 │   ├── install-shell-tools.sh        # 🐚  zsh + oh-my-zsh + fzf + starship + nvm
 │   ├── install-terminal-tools.sh     # 🖥️  byobu + tmux + ncdu
 │   ├── install-docker.sh             # 🐳  Docker Engine/Desktop
