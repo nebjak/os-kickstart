@@ -11,24 +11,24 @@ import (
 
 type menuItem struct {
 	module    modules.Module
-	separator bool   // true = this is a section header, not selectable
-	label     string // for separators
-	Status    string // update check result
+	separator bool
+	label     string
+	Status    string
 }
 
 type menuModel struct {
-	items      []menuItem
-	allMods    []modules.Module // kept for passing to update checks
-	cursor     int
-	selected   map[int]bool
-	height     int
-	checksRan  bool
+	items     []menuItem
+	allMods   []modules.Module
+	cursor    int
+	selected  map[int]bool
+	height    int
+	offset    int // scroll offset
+	checksRan bool
 }
 
 func newMenuModel(mods []modules.Module) menuModel {
 	var items []menuItem
 
-	// ── Optimizations ──
 	items = append(items, menuItem{separator: true, label: "Optimizations"})
 	for _, m := range mods {
 		if m.Category == "optimization" {
@@ -36,9 +36,7 @@ func newMenuModel(mods []modules.Module) menuModel {
 		}
 	}
 
-	// ── Installations — with subsections ──
 	items = append(items, menuItem{separator: true, label: "Installations"})
-
 	for _, sub := range modules.InstallSubsections() {
 		hasItems := false
 		for _, m := range mods {
@@ -50,7 +48,6 @@ func newMenuModel(mods []modules.Module) menuModel {
 		if !hasItems {
 			continue
 		}
-
 		items = append(items, menuItem{separator: true, label: "  " + sub})
 		for _, m := range mods {
 			if m.Category == "installation" && m.Subsection == sub {
@@ -59,7 +56,6 @@ func newMenuModel(mods []modules.Module) menuModel {
 		}
 	}
 
-	// Set cursor to first non-separator item.
 	cursor := 0
 	for i, item := range items {
 		if !item.separator {
@@ -73,7 +69,7 @@ func newMenuModel(mods []modules.Module) menuModel {
 		allMods:  mods,
 		cursor:   cursor,
 		selected: make(map[int]bool),
-		height:   20,
+		height:   30,
 	}
 }
 
@@ -95,17 +91,21 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.height = msg.Height - 6
+		// header=3 lines, footer=2 lines
+		m.height = msg.Height - 5
 		if m.height < 10 {
 			m.height = 10
 		}
+		m.fixScroll()
 
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
 			m.cursor = m.prevSelectable(m.cursor)
+			m.fixScroll()
 		case "down", "j":
 			m.cursor = m.nextSelectable(m.cursor)
+			m.fixScroll()
 		case " ":
 			if !m.items[m.cursor].separator {
 				if m.selected[m.cursor] {
@@ -131,8 +131,21 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 	return m, nil
 }
 
+// fixScroll adjusts offset so cursor stays visible.
+func (m *menuModel) fixScroll() {
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+m.height {
+		m.offset = m.cursor - m.height + 1
+	}
+	if m.offset < 0 {
+		m.offset = 0
+	}
+}
+
 var (
-	updateAvailableStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")) // bold white
+	updateAvailableStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	latestStyle          = OKStyle
 	installedStyle       = MutedStyle
 	sectionStyle         = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
@@ -142,70 +155,95 @@ var (
 func (m menuModel) View() string {
 	var b strings.Builder
 
+	// Fixed header
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
-	b.WriteString("\n" + titleStyle.Render("  Kickstart") + "\n")
-	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • enter confirm"))
+	b.WriteString(titleStyle.Render("  Kickstart"))
 	if !m.checksRan {
 		b.WriteString(MutedStyle.Render("  (checking for updates...)"))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • enter confirm") + "\n\n")
 
+	// Build all lines
+	var lines []string
 	for i, item := range m.items {
-		if item.separator {
-			label := item.label
-			// Main sections vs subsections
-			if !strings.HasPrefix(label, "  ") {
-				sep := fmt.Sprintf("  ── %s ──", label)
-				b.WriteString(sectionStyle.Render(sep) + "\n")
-			} else {
-				sep := fmt.Sprintf("    %s", strings.TrimSpace(label))
-				b.WriteString(subsectionStyle.Render(sep) + "\n")
-			}
-			continue
-		}
+		lines = append(lines, m.renderItem(i, item))
+	}
 
-		cursor := "  "
-		if i == m.cursor {
-			cursor = lipgloss.NewStyle().Foreground(ColorAccent).Render("▸ ")
-		}
+	// Apply scroll window
+	end := m.offset + m.height
+	if end > len(lines) {
+		end = len(lines)
+	}
+	start := m.offset
+	if start > len(lines) {
+		start = len(lines)
+	}
 
-		checkbox := "[ ]"
-		if m.selected[i] {
-			checkbox = lipgloss.NewStyle().Foreground(ColorOK).Render("[✓]")
-		}
+	// Scroll indicators
+	if start > 0 {
+		b.WriteString(MutedStyle.Render("  ▲ more above") + "\n")
+	}
 
-		label := item.module.Label
-		if i == m.cursor {
-			label = lipgloss.NewStyle().Bold(true).Render(label)
-		}
-
-		line := fmt.Sprintf("%s%s %s", cursor, checkbox, label)
-
-		if item.module.Description != "" {
-			line += MutedStyle.Render(" — " + item.module.Description)
-		}
-
-		if item.Status != "" {
-			switch {
-			case strings.Contains(item.Status, "update available"):
-				line += " " + updateAvailableStyle.Render(item.Status)
-			case item.Status == "[latest]":
-				line += " " + latestStyle.Render(item.Status)
-			case item.Status == "[installed]":
-				line += " " + installedStyle.Render(item.Status)
-			default:
-				line += " " + MutedStyle.Render(item.Status)
-			}
-		}
-
+	for _, line := range lines[start:end] {
 		b.WriteString(line + "\n")
 	}
 
+	if end < len(lines) {
+		b.WriteString(MutedStyle.Render("  ▼ more below") + "\n")
+	}
+
+	// Footer
 	count := len(m.selected)
-	footer := fmt.Sprintf("\n  %d selected", count)
-	b.WriteString(MutedStyle.Render(footer))
+	b.WriteString(MutedStyle.Render(fmt.Sprintf("\n  %d selected", count)))
 
 	return b.String()
+}
+
+func (m menuModel) renderItem(i int, item menuItem) string {
+	if item.separator {
+		label := item.label
+		if !strings.HasPrefix(label, "  ") {
+			return sectionStyle.Render(fmt.Sprintf("  ── %s ──", label))
+		}
+		return subsectionStyle.Render(fmt.Sprintf("    %s", strings.TrimSpace(label)))
+	}
+
+	cursor := "  "
+	if i == m.cursor {
+		cursor = lipgloss.NewStyle().Foreground(ColorAccent).Render("▸ ")
+	}
+
+	checkbox := "[ ]"
+	if m.selected[i] {
+		checkbox = lipgloss.NewStyle().Foreground(ColorOK).Render("[✓]")
+	}
+
+	label := item.module.Label
+	if i == m.cursor {
+		label = lipgloss.NewStyle().Bold(true).Render(label)
+	}
+
+	line := fmt.Sprintf("%s%s %s", cursor, checkbox, label)
+
+	if item.module.Description != "" {
+		line += MutedStyle.Render(" — " + item.module.Description)
+	}
+
+	if item.Status != "" {
+		switch {
+		case strings.Contains(item.Status, "update available"):
+			line += " " + updateAvailableStyle.Render(item.Status)
+		case item.Status == "[latest]":
+			line += " " + latestStyle.Render(item.Status)
+		case item.Status == "[installed]":
+			line += " " + installedStyle.Render(item.Status)
+		default:
+			line += " " + MutedStyle.Render(item.Status)
+		}
+	}
+
+	return line
 }
 
 func (m menuModel) prevSelectable(from int) int {
