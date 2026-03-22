@@ -149,8 +149,8 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		// Reserve 20% for header/footer chrome, minimum 10 lines for list
-		m.height = int(float64(msg.Height) * 0.80)
+		// header=3 + help=1 + spacing=1 + footer=2 + sticky=1 + buffer=2 = 10
+		m.height = msg.Height - 10
 		if m.height < 10 {
 			m.height = 10
 		}
@@ -241,7 +241,7 @@ func detectTermHeight() int {
 	if err != nil || h <= 0 {
 		h = 30
 	}
-	usable := int(float64(h) * 0.80)
+	usable := h - 10
 	if usable < 10 {
 		usable = 10
 	}
