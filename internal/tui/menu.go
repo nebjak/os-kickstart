@@ -232,11 +232,24 @@ func (m *menuModel) applyFilter() {
 }
 
 func (m *menuModel) fixScroll() {
-	if m.cursor < m.offset {
-		m.offset = m.cursor
+	const scrollPadding = 3
+
+	// Keep cursor at least scrollPadding lines from top
+	if m.cursor < m.offset+scrollPadding {
+		m.offset = m.cursor - scrollPadding
 	}
-	if m.cursor >= m.offset+m.height {
-		m.offset = m.cursor - m.height + 1
+	// Keep cursor at least scrollPadding lines from bottom
+	if m.cursor >= m.offset+m.height-scrollPadding {
+		m.offset = m.cursor - m.height + scrollPadding + 1
+	}
+
+	// Clamp
+	maxOffset := len(m.items) - m.height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.offset > maxOffset {
+		m.offset = maxOffset
 	}
 	if m.offset < 0 {
 		m.offset = 0
@@ -404,6 +417,8 @@ func (m menuModel) renderItem(i int, item menuItem) string {
 	checkbox := "[ ]"
 	if m.selected[i] {
 		checkbox = lipgloss.NewStyle().Foreground(ColorOK).Render("[✓]")
+	} else if strings.HasPrefix(item.Status, "[installed") {
+		checkbox = MutedStyle.Render("[✓]")
 	}
 
 	label := item.module.Label
