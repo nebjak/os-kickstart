@@ -84,6 +84,14 @@ func newMenuModel(mods []modules.Module) menuModel {
 			if _, err := os.Stat(path); err == nil {
 				items[i].Status = "[installed]"
 			}
+		} else if mod.InstalledGrepFile != "" {
+			parts := strings.SplitN(mod.InstalledGrepFile, ":", 2)
+			if len(parts) == 2 {
+				data, err := os.ReadFile(parts[0])
+				if err == nil && strings.Contains(string(data), parts[1]) {
+					items[i].Status = "[installed]"
+				}
+			}
 		}
 	}
 
