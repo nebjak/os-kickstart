@@ -53,7 +53,5 @@ func (m bannerModel) View() string {
 	}
 	verLine := MutedStyle.Render("  " + ver)
 
-	hint := MutedStyle.Render("  Press any key to continue...")
-
-	return "\n\n" + logo + "\n\n" + subtitle + "\n" + verLine + "\n\n" + hint
+	return "\n\n" + logo + "\n\n" + subtitle + "\n" + verLine
 }
