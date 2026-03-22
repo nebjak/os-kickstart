@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dpanic/os-kickstart/internal/modules"
@@ -17,13 +18,17 @@ type menuItem struct {
 }
 
 type menuModel struct {
-	items     []menuItem
-	allMods   []modules.Module
-	cursor    int
-	selected  map[int]bool
-	height    int
-	offset    int // scroll offset
-	checksRan bool
+	items      []menuItem
+	allMods    []modules.Module
+	cursor     int
+	selected   map[int]bool
+	height     int
+	offset     int
+	checksRan  bool
+	spinner    spinner.Model
+	filtering  bool
+	filter     string
+	visible    []int // indices of visible items when filtering
 }
 
 func newMenuModel(mods []modules.Module) menuModel {
@@ -64,21 +69,33 @@ func newMenuModel(mods []modules.Module) menuModel {
 		}
 	}
 
+	s := spinner.New()
+	s.Spinner = spinner.MiniDot
+	s.Style = lipgloss.NewStyle().Foreground(ColorAccent2)
+
 	return menuModel{
 		items:    items,
 		allMods:  mods,
 		cursor:   cursor,
 		selected: make(map[int]bool),
 		height:   30,
+		spinner:  s,
 	}
 }
 
 func (m menuModel) Init() tea.Cmd {
-	return runUpdateChecks(m.allMods)
+	return tea.Batch(m.spinner.Tick, runUpdateChecks(m.allMods))
 }
 
 func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !m.checksRan {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+
 	case updateCheckDoneMsg:
 		m.checksRan = true
 		for _, r := range msg.results {
@@ -91,7 +108,6 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		// header=3 lines, footer=2 lines
 		m.height = msg.Height - 5
 		if m.height < 10 {
 			m.height = 10
@@ -99,6 +115,33 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		m.fixScroll()
 
 	case tea.KeyMsg:
+		// Filter mode input
+		if m.filtering {
+			switch msg.String() {
+			case "esc":
+				m.filtering = false
+				m.filter = ""
+				m.visible = nil
+				m.fixScroll()
+				return m, nil
+			case "backspace":
+				if len(m.filter) > 0 {
+					m.filter = m.filter[:len(m.filter)-1]
+					m.applyFilter()
+				}
+				return m, nil
+			case "enter":
+				m.filtering = false
+				return m, nil
+			default:
+				if len(msg.String()) == 1 {
+					m.filter += msg.String()
+					m.applyFilter()
+				}
+				return m, nil
+			}
+		}
+
 		switch msg.String() {
 		case "up", "k":
 			m.cursor = m.prevSelectable(m.cursor)
@@ -114,6 +157,21 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 					m.selected[m.cursor] = true
 				}
 			}
+		case "ctrl+a":
+			allSelected := len(m.selected) == m.selectableCount()
+			if allSelected {
+				m.selected = make(map[int]bool)
+			} else {
+				for i, item := range m.items {
+					if !item.separator {
+						m.selected[i] = true
+					}
+				}
+			}
+		case "/":
+			m.filtering = true
+			m.filter = ""
+			return m, nil
 		case "enter":
 			selected := m.getSelected()
 			if len(selected) == 0 {
@@ -124,6 +182,11 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 				func() tea.Msg { return switchScreenMsg{to: screenMode} },
 			)
 		case "q", "esc":
+			if m.filter != "" {
+				m.filter = ""
+				m.visible = nil
+				return m, nil
+			}
 			return m, tea.Quit
 		}
 	}
@@ -131,7 +194,29 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 	return m, nil
 }
 
-// fixScroll adjusts offset so cursor stays visible.
+func (m *menuModel) applyFilter() {
+	if m.filter == "" {
+		m.visible = nil
+		return
+	}
+	lower := strings.ToLower(m.filter)
+	m.visible = nil
+	for i, item := range m.items {
+		if item.separator {
+			continue
+		}
+		if strings.Contains(strings.ToLower(item.module.Label), lower) ||
+			strings.Contains(strings.ToLower(item.module.Description), lower) {
+			m.visible = append(m.visible, i)
+		}
+	}
+	// Move cursor to first visible item
+	if len(m.visible) > 0 {
+		m.cursor = m.visible[0]
+		m.offset = 0
+	}
+}
+
 func (m *menuModel) fixScroll() {
 	if m.cursor < m.offset {
 		m.offset = m.cursor
@@ -144,30 +229,54 @@ func (m *menuModel) fixScroll() {
 	}
 }
 
+func (m menuModel) selectableCount() int {
+	n := 0
+	for _, item := range m.items {
+		if !item.separator {
+			n++
+		}
+	}
+	return n
+}
+
 var (
 	updateAvailableStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	latestStyle          = OKStyle
 	installedStyle       = MutedStyle
 	sectionStyle         = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
 	subsectionStyle      = lipgloss.NewStyle().Foreground(ColorAccent2)
+	headerStyle          = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).PaddingLeft(1)
 )
 
 func (m menuModel) View() string {
 	var b strings.Builder
 
-	// Fixed header
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
-	b.WriteString(titleStyle.Render("  Kickstart"))
+	// Fixed header with box
+	b.WriteString("\n")
+	b.WriteString(headerStyle.Render("Kickstart"))
 	if !m.checksRan {
-		b.WriteString(MutedStyle.Render("  (checking for updates...)"))
+		b.WriteString("  " + m.spinner.View() + MutedStyle.Render(" checking for updates"))
 	}
 	b.WriteString("\n")
-	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • enter confirm") + "\n\n")
+	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • ctrl+a all • / filter • enter confirm") + "\n")
+	if m.filtering {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render("  / " + m.filter + "█") + "\n")
+	} else if m.filter != "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render("  filter: "+m.filter) +
+			MutedStyle.Render(" (esc clear)") + "\n")
+	}
+	b.WriteString("\n")
 
-	// Build all lines
+	// Build all lines (filtered or full)
 	var lines []string
-	for i, item := range m.items {
-		lines = append(lines, m.renderItem(i, item))
+	if m.filter != "" && m.visible != nil {
+		for _, idx := range m.visible {
+			lines = append(lines, m.renderItem(idx, m.items[idx]))
+		}
+	} else {
+		for i, item := range m.items {
+			lines = append(lines, m.renderItem(i, item))
+		}
 	}
 
 	// Apply scroll window
@@ -180,9 +289,8 @@ func (m menuModel) View() string {
 		start = len(lines)
 	}
 
-	// Scroll indicators
 	if start > 0 {
-		b.WriteString(MutedStyle.Render("  ▲ more above") + "\n")
+		b.WriteString(MutedStyle.Render("  ▲ more") + "\n")
 	}
 
 	for _, line := range lines[start:end] {
@@ -190,12 +298,13 @@ func (m menuModel) View() string {
 	}
 
 	if end < len(lines) {
-		b.WriteString(MutedStyle.Render("  ▼ more below") + "\n")
+		b.WriteString(MutedStyle.Render("  ▼ more") + "\n")
 	}
 
 	// Footer
 	count := len(m.selected)
-	b.WriteString(MutedStyle.Render(fmt.Sprintf("\n  %d selected", count)))
+	total := m.selectableCount()
+	b.WriteString(MutedStyle.Render(fmt.Sprintf("\n  %d / %d selected", count, total)))
 
 	return b.String()
 }
