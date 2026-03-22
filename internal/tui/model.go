@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
+	kickembed "github.com/dpanic/os-kickstart/internal/embed"
 	"github.com/dpanic/os-kickstart/internal/modules"
 )
 
@@ -98,15 +99,72 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case switchScreenMsg:
 		m.screen = msg.to
+		switch msg.to {
+		case screenGitInfo:
+			showWebhook := modules.NeedsWebhook(m.selectedModules)
+			if !modules.NeedsUserInfo(m.selectedModules) {
+				m.screen = screenConfirm
+				m.confirm = newConfirmModel(len(m.selectedModules), m.selectedMode)
+				return m, m.confirm.Init()
+			}
+			m.gitInfo = newGitInfoModel(showWebhook)
+			return m, m.gitInfo.Init()
+		case screenConfirm:
+			m.confirm = newConfirmModel(len(m.selectedModules), m.selectedMode)
+			return m, m.confirm.Init()
+		}
 		return m, m.initScreen(msg.to)
+
 	case selectedModulesMsg:
 		m.selectedModules = msg.modules
+
 	case selectedModeMsg:
 		m.selectedMode = msg.mode
+
 	case userInfoMsg:
 		m.userName = msg.name
 		m.userEmail = msg.email
 		m.webhookURL = msg.webhook
+
+	case confirmMsg:
+		if !msg.confirmed {
+			m.screen = screenMenu
+			return m, nil
+		}
+		// Extract embedded assets and start execution
+		tmpDir, cleanup, err := kickembed.Extract(m.config.Assets)
+		if err != nil {
+			// Fall back to summary with error
+			m.screen = screenSummary
+			m.summary = newSummaryModel(nil)
+			return m, nil
+		}
+		m.tmpDir = tmpDir
+		m.cleanupFn = cleanup
+
+		env := map[string]string{
+			"KICKSTART_USER_NAME":  m.userName,
+			"KICKSTART_USER_EMAIL": m.userEmail,
+		}
+
+		m.executor = newExecutorModel(
+			m.selectedModules,
+			tmpDir,
+			m.selectedMode.Flag(),
+			env,
+			m.config.Assets,
+		)
+		m.screen = screenExecutor
+		return m, m.executor.Init()
+
+	case allDoneMsg:
+		if m.cleanupFn != nil {
+			m.cleanupFn()
+			m.cleanupFn = nil
+		}
+		m.summary = newSummaryModel(m.executor.results)
+		m.screen = screenSummary
+		return m, m.summary.Init()
 	}
 
 	return m, cmd
