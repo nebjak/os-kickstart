@@ -78,7 +78,7 @@ func newMenuModel(mods []modules.Module) menuModel {
 		allMods:  mods,
 		cursor:   cursor,
 		selected: make(map[int]bool),
-		height:   30,
+		height:   15,
 		spinner:  s,
 	}
 }
@@ -108,8 +108,8 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		// header box=3 + help=1 + gap=1 + footer=2 = 7 reserved
-		m.height = msg.Height - 7
+		// Reserve 20% for header/footer chrome, minimum 10 lines for list
+		m.height = int(float64(msg.Height) * 0.80)
 		if m.height < 10 {
 			m.height = 10
 		}
