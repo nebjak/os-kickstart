@@ -483,12 +483,12 @@ func (m menuModel) renderItem(i int, item menuItem) string {
 	if m.selected[i] {
 		checkbox = lipgloss.NewStyle().Foreground(ColorOK).Render("[✓]")
 	} else if strings.HasPrefix(item.Status, "[installed") {
-		checkbox = MutedStyle.Render("[✓]")
+		checkbox = lipgloss.NewStyle().Foreground(ColorMuted).Render("[•]")
 	}
 
 	label := item.module.Label
 	if i == m.cursor {
-		label = lipgloss.NewStyle().Bold(true).Render(label)
+		label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(label)
 	}
 
 	line := fmt.Sprintf("%s%s %s", cursor, checkbox, label)
