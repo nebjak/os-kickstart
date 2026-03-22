@@ -149,8 +149,8 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		// Reserve 20% for header/footer chrome, minimum 10 lines for list
-		m.height = int(float64(msg.Height) * 0.80)
+		// header=3 + help=1 + spacing=1 + footer=2 + sticky=1 + buffer=2 = 10
+		m.height = msg.Height - 10
 		if m.height < 10 {
 			m.height = 10
 		}
@@ -241,7 +241,7 @@ func detectTermHeight() int {
 	if err != nil || h <= 0 {
 		h = 30
 	}
-	usable := int(float64(h) * 0.80)
+	usable := h - 10
 	if usable < 10 {
 		usable = 10
 	}
@@ -323,16 +323,7 @@ func (m menuModel) View() string {
 	byText := HeaderByLineStyle.Render(" by dpanic")
 	headerLeft := lipgloss.JoinHorizontal(lipgloss.Center, titleText, byText)
 
-	if !m.checksRan {
-		spinnerText := HeaderSpinnerLabel.Render(" checking for updates")
-		headerLeft = lipgloss.JoinHorizontal(
-			lipgloss.Center,
-			headerLeft,
-			"  ",
-			m.spinner.View(),
-			spinnerText,
-		)
-	}
+	// spinner moved to footer
 
 	header := HeaderBorderStyle.Width(w - 4).Render(headerLeft)
 	b.WriteString(header + "\n")
@@ -372,6 +363,7 @@ func (m menuModel) View() string {
 		)
 	}
 
+	b.WriteString("\n")
 	// ── List ────────────────────────────────────────────────────
 	var lines []string
 	if m.filter != "" && m.visible != nil {
@@ -394,17 +386,19 @@ func (m menuModel) View() string {
 		end = len(lines)
 	}
 
-	// Sticky section header — show current section if its separator scrolled off
+	// Sticky section header — only show when the original separator is above the viewport
 	if m.filter == "" && start > 0 {
+		sectionIdx := -1
 		currentSection := ""
-		for idx := start; idx >= 0; idx-- {
-			if idx < len(m.items) && m.items[idx].separator && m.items[idx].label != "" && !strings.HasPrefix(m.items[idx].label, "  ") {
+		for idx := start - 1; idx >= 0; idx-- {
+			if m.items[idx].separator && m.items[idx].label != "" && !strings.HasPrefix(m.items[idx].label, "  ") {
+				sectionIdx = idx
 				currentSection = m.items[idx].label
 				break
 			}
 		}
-		if currentSection != "" {
-			// Only show if the separator itself is above the viewport
+		// Only show sticky if the separator is ABOVE the viewport (not visible)
+		if sectionIdx >= 0 && sectionIdx < start {
 			b.WriteString(sectionStyle.Render(fmt.Sprintf("  ── %s ──", currentSection)) + "\n")
 		}
 	}
@@ -440,7 +434,9 @@ func (m menuModel) View() string {
 	}
 
 	rightText := ""
-	if updates > 0 {
+	if !m.checksRan {
+		rightText = m.spinner.View() + HeaderSpinnerLabel.Render(" checking for updates ")
+	} else if updates > 0 {
 		rightText = FooterUpdateStyle.Render(
 			fmt.Sprintf("%d update(s) available ", updates),
 		)
@@ -483,12 +479,12 @@ func (m menuModel) renderItem(i int, item menuItem) string {
 	if m.selected[i] {
 		checkbox = lipgloss.NewStyle().Foreground(ColorOK).Render("[✓]")
 	} else if strings.HasPrefix(item.Status, "[installed") {
-		checkbox = MutedStyle.Render("[✓]")
+		checkbox = lipgloss.NewStyle().Foreground(ColorMuted).Render("[✓]")
 	}
 
 	label := item.module.Label
 	if i == m.cursor {
-		label = lipgloss.NewStyle().Bold(true).Render(label)
+		label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(label)
 	}
 
 	line := fmt.Sprintf("%s%s %s", cursor, checkbox, label)
