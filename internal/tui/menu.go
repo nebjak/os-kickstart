@@ -108,7 +108,8 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.height = msg.Height - 5
+		// header box=3 + help=1 + gap=1 + footer=2 = 7 reserved
+		m.height = msg.Height - 7
 		if m.height < 10 {
 			m.height = 10
 		}
@@ -245,27 +246,31 @@ var (
 	installedStyle       = MutedStyle
 	sectionStyle         = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
 	subsectionStyle      = lipgloss.NewStyle().Foreground(ColorAccent2)
-	headerStyle          = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).PaddingLeft(1)
+
+	headerBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorAccent).
+			Foreground(ColorAccent).
+			Bold(true).
+			Padding(0, 2)
 )
 
 func (m menuModel) View() string {
 	var b strings.Builder
 
-	// Fixed header with box
-	b.WriteString("\n")
-	b.WriteString(headerStyle.Render("Kickstart"))
+	// Header box
+	title := "OS Kickstart by dpanic"
 	if !m.checksRan {
-		b.WriteString("  " + m.spinner.View() + MutedStyle.Render(" checking for updates"))
+		title += "  " + m.spinner.View() + " checking for updates"
 	}
-	b.WriteString("\n")
-	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • ctrl+a all • / filter • enter confirm") + "\n")
+	b.WriteString(headerBox.Render(title) + "\n")
+	b.WriteString(MutedStyle.Render(" ↑/↓ navigate • space select • ctrl+a all • / filter • enter confirm") + "\n")
 	if m.filtering {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render("  / " + m.filter + "█") + "\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render(" / " + m.filter + "█") + "\n")
 	} else if m.filter != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render("  filter: "+m.filter) +
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render(" filter: "+m.filter) +
 			MutedStyle.Render(" (esc clear)") + "\n")
 	}
-	b.WriteString("\n")
 
 	// Build all lines (filtered or full)
 	var lines []string
@@ -289,16 +294,12 @@ func (m menuModel) View() string {
 		start = len(lines)
 	}
 
-	if start > 0 {
-		b.WriteString(MutedStyle.Render("  ▲ more") + "\n")
-	}
-
 	for _, line := range lines[start:end] {
 		b.WriteString(line + "\n")
 	}
 
 	if end < len(lines) {
-		b.WriteString(MutedStyle.Render("  ▼ more") + "\n")
+		b.WriteString(MutedStyle.Render("  ▼ " + fmt.Sprintf("%d more", len(lines)-end)) + "\n")
 	}
 
 	// Footer

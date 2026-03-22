@@ -40,7 +40,7 @@ func (m bannerModel) View() string {
 		Foreground(ColorAccent).
 		PaddingLeft(2)
 
-	logo := logoStyle.Render("Kickstart")
+	logo := logoStyle.Render("OS Kickstart by dpanic")
 
 	subtitle := lipgloss.NewStyle().
 		Foreground(ColorAccent2).
