@@ -98,12 +98,20 @@ func runUpdateChecks(mods []modules.Module) tea.Cmd {
 					return
 				}
 
-				// Otherwise just check if installed
+				// Otherwise just check if installed + try to get version
 				if m.InstalledCmd != "" {
 					if isInstalled(m.InstalledCmd) {
-						results[idx] = updateCheckResult{
-							moduleID: m.ID,
-							status:   "[installed]",
+						ver := tryGetVersion(ctx, m.InstalledCmd)
+						if ver != "" {
+							results[idx] = updateCheckResult{
+								moduleID: m.ID,
+								status:   fmt.Sprintf("[installed %s]", ver),
+							}
+						} else {
+							results[idx] = updateCheckResult{
+								moduleID: m.ID,
+								status:   "[installed]",
+							}
 						}
 					} else {
 						results[idx] = updateCheckResult{moduleID: m.ID}
@@ -139,6 +147,21 @@ func checkVersion(ctx context.Context, c versionChecker) updateCheckResult {
 		moduleID: c.moduleID,
 		status:   fmt.Sprintf("[update %s → %s]", installed, latest),
 	}
+}
+
+// tryGetVersion runs `cmd --version` and extracts a semver from the output.
+func tryGetVersion(ctx context.Context, cmd string) string {
+	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx2, cmd, "--version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	re := regexp.MustCompile(`(\d+\.\d+[\.\d]*)`)
+	if m := re.FindString(string(out)); m != "" {
+		return m
+	}
+	return ""
 }
 
 func isInstalled(cmd string) bool {
