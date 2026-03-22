@@ -35,17 +35,25 @@ func (m bannerModel) Update(msg tea.Msg) (bannerModel, tea.Cmd) {
 }
 
 func (m bannerModel) View() string {
-	title := lipgloss.NewStyle().
+	logoStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(ColorAccent).
-		Render("  Kickstart")
+		PaddingLeft(2)
+
+	logo := logoStyle.Render("Kickstart")
 
 	subtitle := lipgloss.NewStyle().
 		Foreground(ColorAccent2).
-		Render("  System optimization & dev environment setup")
+		PaddingLeft(2).
+		Render("System optimization & dev environment setup")
 
-	ver := MutedStyle.Render("  " + m.version + " (" + m.commit + ")")
+	ver := m.version
+	if m.commit != "none" && m.commit != "" {
+		ver += " (" + m.commit + ")"
+	}
+	verLine := MutedStyle.Render("  " + ver)
 
-	return "\n" + title + "\n\n" + subtitle + "\n" + ver + "\n\n" +
-		MutedStyle.Render("  Press any key to continue...")
+	hint := MutedStyle.Render("  Press any key to continue...")
+
+	return "\n\n" + logo + "\n\n" + subtitle + "\n" + verLine + "\n\n" + hint
 }

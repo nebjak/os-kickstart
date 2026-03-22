@@ -143,8 +143,12 @@ func (m menuModel) View() string {
 	var b strings.Builder
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
-	b.WriteString(titleStyle.Render("  Select modules") + "\n")
-	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • enter confirm") + "\n\n")
+	b.WriteString("\n" + titleStyle.Render("  Kickstart") + "\n")
+	b.WriteString(MutedStyle.Render("  ↑/↓ navigate • space select • enter confirm"))
+	if !m.checksRan {
+		b.WriteString(MutedStyle.Render("  (checking for updates...)"))
+	}
+	b.WriteString("\n\n")
 
 	for i, item := range m.items {
 		if item.separator {
