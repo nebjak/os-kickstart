@@ -22,6 +22,7 @@ type menuModel struct {
 	allMods    []modules.Module
 	cursor     int
 	selected   map[int]bool
+	width      int
 	height     int
 	offset     int
 	checksRan  bool
@@ -119,6 +120,7 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
 		// Reserve 20% for header/footer chrome, minimum 10 lines for list
 		m.height = int(float64(msg.Height) * 0.80)
 		if m.height < 10 {
@@ -257,34 +259,70 @@ var (
 	installedStyle       = MutedStyle
 	sectionStyle         = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
 	subsectionStyle      = lipgloss.NewStyle().Foreground(ColorAccent2)
-
-	headerBox = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorAccent).
-			Foreground(ColorAccent).
-			Bold(true).
-			Padding(0, 2)
 )
 
 func (m menuModel) View() string {
 	var b strings.Builder
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
 
-	// Header box
-	byLine := lipgloss.NewStyle().Foreground(ColorMuted).SetString("by dpanic").String()
-	title := "OS Kickstart " + byLine
+	// ── Header ──────────────────────────────────────────────────
+	titleText := HeaderTitleStyle.Render("OS Kickstart")
+	byText := HeaderByLineStyle.Render(" by dpanic")
+	headerLeft := lipgloss.JoinHorizontal(lipgloss.Center, titleText, byText)
+
 	if !m.checksRan {
-		title += "  " + m.spinner.View() + " checking for updates"
-	}
-	b.WriteString(headerBox.Render(title) + "\n")
-	b.WriteString(MutedStyle.Render(" ↑/↓ navigate • space select • ctrl+a all • / filter • enter confirm") + "\n")
-	if m.filtering {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render(" / " + m.filter + "█") + "\n")
-	} else if m.filter != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent2).Render(" filter: "+m.filter) +
-			MutedStyle.Render(" (esc clear)") + "\n")
+		spinnerText := HeaderSpinnerLabel.Render(" checking for updates")
+		headerLeft = lipgloss.JoinHorizontal(
+			lipgloss.Center,
+			headerLeft,
+			"  ",
+			m.spinner.View(),
+			spinnerText,
+		)
 	}
 
-	// Build all lines (filtered or full)
+	header := HeaderBorderStyle.Width(w - 4).Render(headerLeft)
+	b.WriteString(header + "\n")
+
+	// ── Help bar ────────────────────────────────────────────────
+	helpParts := []struct {
+		key  string
+		desc string
+	}{
+		{"↑/↓", "navigate"},
+		{"space", "select"},
+		{"ctrl+a", "all"},
+		{"/", "filter"},
+		{"enter", "confirm"},
+		{"q", "quit"},
+	}
+	var helpSegments []string
+	sep := HelpSepStyle.Render(" · ")
+	for _, h := range helpParts {
+		helpSegments = append(
+			helpSegments,
+			HelpKeyStyle.Render(h.key)+" "+HelpDescStyle.Render(h.desc),
+		)
+	}
+	helpLine := " " + strings.Join(helpSegments, sep)
+	b.WriteString(helpLine + "\n")
+
+	// ── Filter bar ──────────────────────────────────────────────
+	if m.filtering {
+		b.WriteString(
+			lipgloss.NewStyle().Foreground(ColorAccent2).Render(" / "+m.filter+"█") + "\n",
+		)
+	} else if m.filter != "" {
+		b.WriteString(
+			lipgloss.NewStyle().Foreground(ColorAccent2).Render(" filter: "+m.filter) +
+				MutedStyle.Render(" (esc clear)") + "\n",
+		)
+	}
+
+	// ── List ────────────────────────────────────────────────────
 	var lines []string
 	if m.filter != "" && m.visible != nil {
 		for _, idx := range m.visible {
@@ -311,26 +349,40 @@ func (m menuModel) View() string {
 	}
 
 	if end < len(lines) {
-		b.WriteString(MutedStyle.Render("  ▼ " + fmt.Sprintf("%d more", len(lines)-end)) + "\n")
+		b.WriteString(MutedStyle.Render("  ▼ "+fmt.Sprintf("%d more", len(lines)-end)) + "\n")
 	}
 
-	// Footer
+	// ── Footer status bar ───────────────────────────────────────
 	count := len(m.selected)
 	total := m.selectableCount()
-	footer := fmt.Sprintf("\n  %d / %d selected", count, total)
+	leftText := FooterCountStyle.Render(fmt.Sprintf(" %d / %d selected", count, total))
 
-	// Count available updates
 	updates := 0
 	for _, item := range m.items {
 		if strings.HasPrefix(item.Status, "[update") {
 			updates++
 		}
 	}
+
+	rightText := ""
 	if updates > 0 {
-		footer += fmt.Sprintf("  •  %d update(s) available", updates)
+		rightText = FooterUpdateStyle.Render(
+			fmt.Sprintf("%d update(s) available ", updates),
+		)
 	}
 
-	b.WriteString(MutedStyle.Render(footer))
+	// Pad the bar to fill the full terminal width
+	leftWidth := lipgloss.Width(leftText)
+	rightWidth := lipgloss.Width(rightText)
+	gap := w - leftWidth - rightWidth
+	if gap < 0 {
+		gap = 0
+	}
+
+	footerBar := FooterBarStyle.Width(w).Render(
+		leftText + strings.Repeat(" ", gap) + rightText,
+	)
+	b.WriteString("\n" + footerBar)
 
 	return b.String()
 }
