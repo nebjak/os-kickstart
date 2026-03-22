@@ -47,8 +47,7 @@ func New(cfg Config) Model {
 	mods := modules.ForOS(runtime.GOOS)
 	return Model{
 		config: cfg,
-		screen: screenBanner,
-		banner: newBannerModel(cfg.Version, cfg.Commit),
+		screen: screenMenu,
 		menu:   newMenuModel(mods),
 		mode:   newModeModel(),
 	}
@@ -79,7 +78,7 @@ func RunCleanup() {
 
 // Init returns the initial command for the program.
 func (m Model) Init() tea.Cmd {
-	return m.banner.Init()
+	return m.menu.Init()
 }
 
 // Update handles messages and routes them to the active screen.
@@ -88,7 +87,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m, nil
+		// Fall through — let active screen also handle window size
 
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {

@@ -73,7 +73,7 @@ var versionCheckers = []versionChecker{
 // runUpdateChecks checks both version updates (GitHub) and installed status for all modules.
 func runUpdateChecks(mods []modules.Module) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 
 		// Build lookup for version checkers
@@ -121,7 +121,7 @@ func runUpdateChecks(mods []modules.Module) tea.Cmd {
 }
 
 func checkVersion(ctx context.Context, c versionChecker) updateCheckResult {
-	installed := getInstalledVersion(c.versionCmd, c.versionRe)
+	installed := getInstalledVersion(ctx, c.versionCmd, c.versionRe)
 	if installed == "" {
 		return updateCheckResult{moduleID: c.moduleID}
 	}
@@ -146,12 +146,13 @@ func isInstalled(cmd string) bool {
 	return err == nil
 }
 
-func getInstalledVersion(cmd []string, re *regexp.Regexp) string {
+func getInstalledVersion(ctx context.Context, cmd []string, re *regexp.Regexp) string {
 	if len(cmd) == 0 {
 		return ""
 	}
 
-	out, err := exec.Command(cmd[0], cmd[1:]...).Output()
+	c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+	out, err := c.Output()
 	if err != nil {
 		return ""
 	}

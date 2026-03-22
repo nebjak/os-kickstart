@@ -78,7 +78,7 @@ func newMenuModel(mods []modules.Module) menuModel {
 		allMods:  mods,
 		cursor:   cursor,
 		selected: make(map[int]bool),
-		height:   15,
+		height:   25,
 		spinner:  s,
 	}
 }
@@ -259,7 +259,8 @@ func (m menuModel) View() string {
 	var b strings.Builder
 
 	// Header box
-	title := "OS Kickstart by dpanic"
+	byLine := lipgloss.NewStyle().Foreground(ColorMuted).SetString("by dpanic").String()
+	title := "OS Kickstart " + byLine
 	if !m.checksRan {
 		title += "  " + m.spinner.View() + " checking for updates"
 	}
