@@ -11,6 +11,10 @@
 
 by **Dusan Panic** \<dpanic@gmail.com\>
 
+<p align="center">
+  <img src="demo.gif" alt="OS Kickstart TUI demo" width="720" />
+</p>
+
 ---
 
 ## Quick Start

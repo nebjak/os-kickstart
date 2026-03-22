@@ -372,6 +372,7 @@ func (m menuModel) View() string {
 		)
 	}
 
+	b.WriteString("\n")
 	// ── List ────────────────────────────────────────────────────
 	var lines []string
 	if m.filter != "" && m.visible != nil {
