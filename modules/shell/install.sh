@@ -287,11 +287,8 @@ if want "nvm"; then
         install "installing nvm"
         LATEST_NVM=$(curl -fsSI https://github.com/nvm-sh/nvm/releases/latest 2>/dev/null \
             | grep -i '^location:' | sed 's|.*/||' | tr -d '\r\n')
-        if want "zsh"; then
-            curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${LATEST_NVM}/install.sh" | PROFILE=/dev/null bash
-        else
-            curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${LATEST_NVM}/install.sh" | bash
-        fi
+        NVM_PROFILE=${SHELL:-/bin/bash}; want "zsh" && NVM_PROFILE=/dev/null
+        curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${LATEST_NVM}/install.sh" | PROFILE="$NVM_PROFILE" bash
     fi
 fi
 
@@ -299,12 +296,13 @@ fi
 if want "fnm"; then
     next "fnm"
 
+    FNM_SKIP=(); want "zsh" && FNM_SKIP=(--skip-shell)
+
     if command -v fnm &>/dev/null; then
         if [[ "$UPDATE" == true ]]; then
             update "updating fnm"
             if is_macos; then brew upgrade fnm 2>/dev/null || true
-            elif want "zsh"; then curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
-            else curl -fsSL https://fnm.vercel.app/install | bash; fi
+            else curl -fsSL https://fnm.vercel.app/install | bash -s -- "${FNM_SKIP[@]}"; fi
         else
             skip "fnm $(fnm --version 2>/dev/null) already installed"
         fi
@@ -314,8 +312,7 @@ if want "fnm"; then
             pkg_install unzip
         fi
         if is_macos; then brew install fnm
-        elif want "zsh"; then curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
-        else curl -fsSL https://fnm.vercel.app/install | bash; fi
+        else curl -fsSL https://fnm.vercel.app/install | bash -s -- "${FNM_SKIP[@]}"; fi
     fi
 
     if is_macos && ! want "zsh"; then
