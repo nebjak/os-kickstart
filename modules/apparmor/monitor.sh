@@ -150,21 +150,17 @@ json_escape() {
     printf '%s' "$raw"
 }
 
-# Build a markdown table row: | col1 | col2 | ...
-table_row() { printf '| %s ' "$@"; printf '|'; }
-
 # ── 1. Check AppArmor service health ────────────────────────────────────────
 
 check_health() {
     if ! systemctl is-active apparmor &>/dev/null; then
         local msg
-        msg=$(printf '%s\n\n%s\n%s\n\n%s\n%s\n%s' \
-            ":red_circle: **AppArmor service is DOWN on \`${HOSTNAME}\`**" \
-            "The AppArmor service is not running." \
-            "**No profiles are being enforced.**" \
-            "| Action | Command |" \
-            "|:--|:--|" \
-            "| Start service | \`sudo systemctl start apparmor\` |")
+        msg=":red_circle: **AppArmor service is DOWN on \`${HOSTNAME}\`**"
+        msg+=$'\n\n'"The AppArmor service is not running. **No profiles are being enforced.**"
+        msg+=$'\n\n'"| Action | Command |"
+        msg+=$'\n'"| --- | --- |"
+        msg+=$'\n'"| Start service | \`sudo systemctl start apparmor\` |"
+        msg+=$'\n'"| Check status | \`sudo systemctl status apparmor\` |"
         send_slack "$(json_escape "$msg")"
         return 1
     fi
@@ -205,29 +201,39 @@ check_violations() {
     fi
 
     local msg
-    msg=$(printf '%s **AppArmor %s on \`%s\`**\n' "$severity_icon" "$severity_label" "$HOSTNAME")
-    msg+=$(printf '\n| Metric | Count |\n|:--|--:|\n| DENIED | **%d** |\n| ALLOWED | %d |\n| Period | since %s |\n' \
-        "$denied_count" "$allowed_count" "$since_date")
+    msg="${severity_icon} **AppArmor ${severity_label} on \`${HOSTNAME}\`**"
+    msg+=$'\n\n'"| Metric | Count |"
+    msg+=$'\n'"| --- | --- |"
+    msg+=$'\n'"| DENIED | **${denied_count}** |"
+    msg+=$'\n'"| ALLOWED | ${allowed_count} |"
+    msg+=$'\n'"| Period | since ${since_date} |"
 
     if [[ $denied_count -gt 0 ]]; then
-        msg+=$(printf '\n**DENIED — top profiles:**\n\n| Profile | Count |\n|:--|--:|\n')
+        msg+=$'\n\n'"**DENIED — top profiles:**"
+        msg+=$'\n\n'"| Profile | Count |"
+        msg+=$'\n'"| --- | --- |"
         msg+=$(echo "$denied_lines" \
             | grep -oP 'profile="\K[^"]+' \
             | sort | uniq -c | sort -rn | head -5 \
-            | awk '{printf "| `%s` | %d |\n", $2, $1}')
-        msg+=$'\n'
+            | awk '{printf "\n| `%s` | %d |", $2, $1}')
     fi
 
     if [[ $allowed_count -gt 0 ]]; then
-        msg+=$(printf '\n**ALLOWED — top profiles:**\n\n| Profile | Count |\n|:--|--:|\n')
+        msg+=$'\n\n'"**ALLOWED — top profiles:**"
+        msg+=$'\n\n'"| Profile | Count |"
+        msg+=$'\n'"| --- | --- |"
         msg+=$(echo "$allowed_lines" \
             | grep -oP 'profile="\K[^"]+' \
             | sort | uniq -c | sort -rn | head -5 \
-            | awk '{printf "| `%s` | %d |\n", $2, $1}')
-        msg+=$'\n'
+            | awk '{printf "\n| `%s` | %d |", $2, $1}')
     fi
 
-    msg+=$(printf '\n---\n**Investigate:**\n```\nsudo journalctl -t kernel | grep apparmor | tail -30\nsudo aa-status\n```')
+    msg+=$'\n\n'"---"
+    msg+=$'\n'"**Investigate:**"
+    msg+=$'\n'"\`\`\`"
+    msg+=$'\n'"sudo journalctl -t kernel | grep apparmor | tail -30"
+    msg+=$'\n'"sudo aa-status"
+    msg+=$'\n'"\`\`\`"
 
     send_slack "$(json_escape "$msg")"
 }
@@ -273,12 +279,17 @@ print(len(d.get('profiles', {}).get('complain', {})))
     local complain_diff=$(( current_complain - baseline_complain ))
 
     local msg
-    msg=$(printf ':warning: **AppArmor: profile state changed on `%s`**\n' "$HOSTNAME")
-    msg+=$(printf '\n| Mode | Baseline | Current | Delta |\n|:--|--:|--:|--:|\n')
-    msg+=$(printf '| Enforce | %s | %s | %+d |\n' "$baseline_enforce" "$current_enforce" "$enforce_diff")
-    msg+=$(printf '| Complain | %s | %s | %+d |\n' "$baseline_complain" "$current_complain" "$complain_diff")
-    msg+=$(printf '\n:warning: Profiles may have been switched or removed. **Possible tampering.**\n')
-    msg+=$(printf '\n---\n**Investigate:**\n```\nsudo aa-status\n```')
+    msg=":warning: **AppArmor: profile state changed on \`${HOSTNAME}\`**"
+    msg+=$'\n\n'"| Mode | Baseline | Current | Delta |"
+    msg+=$'\n'"| --- | --- | --- | --- |"
+    msg+=$'\n'"| Enforce | ${baseline_enforce} | ${current_enforce} | ${enforce_diff} |"
+    msg+=$'\n'"| Complain | ${baseline_complain} | ${current_complain} | ${complain_diff} |"
+    msg+=$'\n\n'":warning: Profiles may have been switched or removed. **Possible tampering.**"
+    msg+=$'\n\n'"---"
+    msg+=$'\n'"**Investigate:**"
+    msg+=$'\n'"\`\`\`"
+    msg+=$'\n'"sudo aa-status"
+    msg+=$'\n'"\`\`\`"
 
     send_slack "$(json_escape "$msg")"
 
@@ -331,8 +342,12 @@ systemctl enable --now apparmor-monitor.timer
 echo "  done."
 
 echo "[4/5] Sending test message to Slack..."
-ACTIVATE_MSG=$(printf ':white_check_mark: **AppArmor monitor activated on `%s`**\n\n| Setting | Value |\n|:--|:--|\n| Interval | every %s |\n| Alerts | DENIED, ALLOWED, tamper, service down |\n| Rate limit | max 1 alert per 5 min |' \
-  "$(hostname)" "${CHECK_INTERVAL}")
+ACTIVATE_MSG=":white_check_mark: **AppArmor monitor activated on \`$(hostname)\`**"
+ACTIVATE_MSG+=$'\n\n'"| Setting | Value |"
+ACTIVATE_MSG+=$'\n'"| --- | --- |"
+ACTIVATE_MSG+=$'\n'"| Interval | every ${CHECK_INTERVAL} |"
+ACTIVATE_MSG+=$'\n'"| Alerts | DENIED, ALLOWED, tamper, service down |"
+ACTIVATE_MSG+=$'\n'"| Rate limit | max 1 alert per 5 min |"
 ACTIVATE_JSON=$(printf '%s' "$ACTIVATE_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK_URL" \
   -H 'Content-Type: application/json' \
