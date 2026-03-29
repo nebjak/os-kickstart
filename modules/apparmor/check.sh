@@ -1,0 +1,259 @@
+#!/bin/bash
+set -euo pipefail
+
+# AppArmor runtime monitor -- called by systemd timer every 15 minutes.
+# Checks for DENIED/ALLOWED events, profile tampering, and service health.
+# Sends alerts via webhook when security issues are detected.
+#
+# Installed to /usr/local/bin/apparmor-monitor.sh by monitor.sh (installer).
+# Config lives in /var/lib/apparmor-monitor/:
+#   webhook-url       -- notification endpoint
+#   ignore-profiles   -- profile names to exclude from DENIED alerts
+#   baseline.json     -- profile snapshot for tamper detection
+#   last-check        -- epoch timestamp of last run
+#   last-alert        -- epoch timestamp of last alert (rate limiting)
+
+STATE_DIR="/var/lib/apparmor-monitor"
+IGNORE_FILE="$STATE_DIR/ignore-profiles"
+HOSTNAME=$(hostname)
+RATE_LIMIT_SECONDS=300
+
+WEBHOOK_URL="$(cat "$STATE_DIR/webhook-url" 2>/dev/null || true)"
+if [[ -z "$WEBHOOK_URL" ]]; then
+    logger "apparmor-monitor: no webhook URL configured, skipping"
+    exit 0
+fi
+
+last_check_ts() {
+    if [[ -f "$STATE_DIR/last-check" ]]; then
+        cat "$STATE_DIR/last-check"
+    else
+        date -d "15 minutes ago" +%s
+    fi
+}
+
+last_alert_ts() {
+    if [[ -f "$STATE_DIR/last-alert" ]]; then
+        cat "$STATE_DIR/last-alert"
+    else
+        echo "0"
+    fi
+}
+
+send_webhook() {
+    local text="$1"
+    local now
+    now=$(date +%s)
+    local prev
+    prev=$(last_alert_ts)
+    local diff=$(( now - prev ))
+
+    if [[ $diff -lt $RATE_LIMIT_SECONDS ]]; then
+        logger "apparmor-monitor: alert suppressed (rate limit, ${diff}s < ${RATE_LIMIT_SECONDS}s)"
+        return 0
+    fi
+
+    local payload
+    payload=$(printf '{"username":"AppArmor Monitor","icon_emoji":":shield:","text":"%s"}' "$text")
+
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK_URL" \
+        -H 'Content-Type: application/json' \
+        -d "$payload")
+
+    if [[ "$http_code" == "200" ]]; then
+        echo "$now" > "$STATE_DIR/last-alert"
+        logger "apparmor-monitor: alert sent (HTTP $http_code)"
+    else
+        logger "apparmor-monitor: webhook POST failed (HTTP $http_code)"
+    fi
+}
+
+json_escape() {
+    local raw="$1"
+    raw="${raw//\\/\\\\}"
+    raw="${raw//\"/\\\"}"
+    raw="${raw//$'\n'/\\n}"
+    printf '%s' "$raw"
+}
+
+# ── 1. Check AppArmor service health ────────────────────────────────────────
+
+check_health() {
+    if ! systemctl is-active apparmor &>/dev/null; then
+        local msg
+        msg=":red_circle: **AppArmor service is DOWN on \`${HOSTNAME}\`**"
+        msg+=$'\n\n'"The AppArmor service is not running. **No profiles are being enforced.**"
+        msg+=$'\n\n'"| Action | Command |"
+        msg+=$'\n'"| --- | --- |"
+        msg+=$'\n'"| Start service | \`sudo systemctl start apparmor\` |"
+        msg+=$'\n'"| Check status | \`sudo systemctl status apparmor\` |"
+        send_webhook "$(json_escape "$msg")"
+        return 1
+    fi
+    return 0
+}
+
+# ── 2. Check journal for DENIED/ALLOWED events ─────────────────────────────
+
+check_violations() {
+    local since_ts
+    since_ts=$(last_check_ts)
+    local since_date
+    since_date=$(date -d "@${since_ts}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')
+
+    local denied_lines allowed_lines
+    denied_lines=$(journalctl -t kernel --since "$since_date" --no-pager 2>/dev/null \
+        | grep 'apparmor="DENIED"' || true)
+    allowed_lines=$(journalctl -t kernel --since "$since_date" --no-pager 2>/dev/null \
+        | grep 'apparmor="ALLOWED"' || true)
+
+    if [[ -n "$denied_lines" && -f "$IGNORE_FILE" ]]; then
+        while IFS= read -r profile; do
+            [[ -z "$profile" || "$profile" == \#* ]] && continue
+            denied_lines=$(echo "$denied_lines" | grep -v "profile=\"${profile}\"" || true)
+        done < "$IGNORE_FILE"
+    fi
+
+    local denied_count=0 allowed_count=0
+    if [[ -n "$denied_lines" ]]; then
+        denied_count=$(echo "$denied_lines" | wc -l)
+    fi
+    if [[ -n "$allowed_lines" ]]; then
+        allowed_count=$(echo "$allowed_lines" | wc -l)
+    fi
+
+    if [[ $denied_count -eq 0 ]]; then
+        if [[ $allowed_count -gt 0 ]]; then
+            logger "apparmor-monitor: ${allowed_count} ALLOWED events (complain mode), no alert needed"
+        fi
+        return 0
+    fi
+
+    local severity_icon=":rotating_light:"
+    local severity_label="CRITICAL"
+
+    local msg
+    msg="${severity_icon} **AppArmor ${severity_label} on \`${HOSTNAME}\`**"
+    msg+=$'\n\n'"| Metric | Count |"
+    msg+=$'\n'"| --- | --- |"
+    msg+=$'\n'"| DENIED | **${denied_count}** |"
+    msg+=$'\n'"| ALLOWED | ${allowed_count} |"
+    msg+=$'\n'"| Period | since ${since_date} |"
+
+    msg+=$'\n\n'"**DENIED — top profiles:**"
+    msg+=$'\n\n'"| Profile | Count |"
+    msg+=$'\n'"| --- | --- |"
+    msg+=$(echo "$denied_lines" \
+        | grep -oP 'profile="\K[^"]+' \
+        | sort | uniq -c | sort -rn | head -5 \
+        | awk '{printf "\n| `%s` | %d |", $2, $1}')
+
+    if [[ $allowed_count -gt 0 ]]; then
+        msg+=$'\n\n'"**ALLOWED — top profiles:**"
+        msg+=$'\n\n'"| Profile | Count |"
+        msg+=$'\n'"| --- | --- |"
+        msg+=$(echo "$allowed_lines" \
+            | grep -oP 'profile="\K[^"]+' \
+            | sort | uniq -c | sort -rn | head -5 \
+            | awk '{printf "\n| `%s` | %d |", $2, $1}')
+    fi
+
+    msg+=$'\n\n'"---"
+    msg+=$'\n'"**Investigate:**"
+    msg+=$'\n'"\`\`\`"
+    msg+=$'\n'"sudo journalctl -t kernel | grep apparmor | tail -30"
+    msg+=$'\n'"sudo aa-status"
+    msg+=$'\n'"\`\`\`"
+
+    send_webhook "$(json_escape "$msg")"
+}
+
+# ── 3. Check for profile tampering ──────────────────────────────────────────
+
+check_tamper() {
+    local baseline_file=""
+    if [[ -f "$STATE_DIR/baseline.json" ]]; then
+        baseline_file="$STATE_DIR/baseline.json"
+    elif [[ -f "$STATE_DIR/baseline.txt" ]]; then
+        baseline_file="$STATE_DIR/baseline.txt"
+    else
+        return 0
+    fi
+
+    local current_enforce current_complain baseline_enforce baseline_complain
+
+    # aa-status --json: {"profiles": {"name": "mode", ...}}
+    if [[ "$baseline_file" == *.json ]] && command -v python3 &>/dev/null; then
+        baseline_enforce=$(python3 -c "
+import json
+d = json.load(open('$baseline_file'))
+print(sum(1 for v in d.get('profiles', {}).values() if v == 'enforce'))
+" 2>/dev/null || echo "?")
+        baseline_complain=$(python3 -c "
+import json
+d = json.load(open('$baseline_file'))
+print(sum(1 for v in d.get('profiles', {}).values() if v == 'complain'))
+" 2>/dev/null || echo "?")
+    else
+        baseline_enforce=$(grep -c "enforce" "$baseline_file" 2>/dev/null || echo "0")
+        baseline_complain=$(grep -c "complain" "$baseline_file" 2>/dev/null || echo "0")
+    fi
+
+    if command -v python3 &>/dev/null; then
+        local current_json
+        current_json=$(aa-status --json 2>/dev/null || true)
+        if [[ -n "$current_json" ]]; then
+            current_enforce=$(echo "$current_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(sum(1 for v in d.get('profiles', {}).values() if v == 'enforce'))
+" 2>/dev/null || echo "0")
+            current_complain=$(echo "$current_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(sum(1 for v in d.get('profiles', {}).values() if v == 'complain'))
+" 2>/dev/null || echo "0")
+        else
+            current_enforce=$(aa-status 2>/dev/null | grep -c "profiles are in enforce" || echo "0")
+            current_complain=$(aa-status 2>/dev/null | grep -c "profiles are in complain" || echo "0")
+        fi
+    else
+        current_enforce=$(aa-status 2>/dev/null | grep -c "profiles are in enforce" || echo "0")
+        current_complain=$(aa-status 2>/dev/null | grep -c "profiles are in complain" || echo "0")
+    fi
+
+    if [[ "$current_enforce" == "$baseline_enforce" && "$current_complain" == "$baseline_complain" ]]; then
+        return 0
+    fi
+
+    local enforce_diff=$(( current_enforce - baseline_enforce ))
+    local complain_diff=$(( current_complain - baseline_complain ))
+
+    local msg
+    msg=":warning: **AppArmor: profile state changed on \`${HOSTNAME}\`**"
+    msg+=$'\n\n'"| Mode | Baseline | Current | Delta |"
+    msg+=$'\n'"| --- | --- | --- | --- |"
+    msg+=$'\n'"| Enforce | ${baseline_enforce} | ${current_enforce} | ${enforce_diff} |"
+    msg+=$'\n'"| Complain | ${baseline_complain} | ${current_complain} | ${complain_diff} |"
+    msg+=$'\n\n'":warning: Profiles may have been switched or removed. **Possible tampering.**"
+    msg+=$'\n\n'"---"
+    msg+=$'\n'"**Investigate:**"
+    msg+=$'\n'"\`\`\`"
+    msg+=$'\n'"sudo aa-status"
+    msg+=$'\n'"\`\`\`"
+
+    send_webhook "$(json_escape "$msg")"
+
+    aa-status --json 2>/dev/null > "$STATE_DIR/baseline.json" || \
+        aa-status 2>/dev/null > "$STATE_DIR/baseline.txt" || true
+}
+
+# ── Main ────────────────────────────────────────────────────────────────────
+
+check_health || true
+check_violations
+check_tamper
+
+date +%s > "$STATE_DIR/last-check"
+logger "apparmor-monitor: check completed"

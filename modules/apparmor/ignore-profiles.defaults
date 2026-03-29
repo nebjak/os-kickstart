@@ -1,0 +1,4 @@
+# Default profiles to ignore (known-noisy snaps that produce harmless DENIED events).
+# These are merged into /var/lib/apparmor-monitor/ignore-profiles on install/update.
+# Add your own entries directly to the installed file -- they won't be removed.
+snap.firmware-updater.firmware-notifier
